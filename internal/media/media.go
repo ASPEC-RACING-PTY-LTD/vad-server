@@ -71,6 +71,8 @@ func (t Tools) Version(ctx context.Context) string {
 // with HTTP range requests (URL; content relayed from a storage node).
 type Input interface {
 	attach(cmd *exec.Cmd) string
+	// protocols are the only protocols FFmpeg may open for this input.
+	protocols() string
 }
 
 type fileInput struct{ f *os.File }
@@ -78,6 +80,10 @@ type fileInput struct{ f *os.File }
 // File reads an open file (passed to the child as a descriptor on Linux, so
 // a path that changes meanwhile does not matter).
 func File(f *os.File) Input { return fileInput{f} }
+
+// Uploaded files are untrusted: a crafted playlist or reference file must
+// not make FFmpeg open other files or reach the network.
+func (fileInput) protocols() string { return "file,pipe" }
 
 func (i fileInput) attach(cmd *exec.Cmd) string {
 	if runtime.GOOS == "linux" {
@@ -92,10 +98,17 @@ type URL string
 
 func (u URL) attach(*exec.Cmd) string { return string(u) }
 
+// The relay URL is plain HTTP on the loopback interface.
+func (URL) protocols() string { return "http,tcp" }
+
 // command builds a child process reading in. The returned input path goes
 // where the command expects the input file.
+//
+// Every upload is treated as untrusted: FFmpeg may only open the input
+// itself (protocol whitelist), and references inside media files (playlists,
+// concat lists, data references) cannot reach other files or the network.
 func command(ctx context.Context, bin string, in Input) (*exec.Cmd, string) {
-	cmd := exec.CommandContext(ctx, bin)
+	cmd := exec.CommandContext(ctx, bin, "-protocol_whitelist", in.protocols())
 	cmd.WaitDelay = 5 * time.Second
 	return cmd, in.attach(cmd)
 }

@@ -62,7 +62,7 @@ func (s *Store) CommitFile(ctx context.Context, r CommitRequest) (*CommitResult,
 	err := s.Tx(ctx, func(tx *sql.Tx) error {
 		var quota, used int64
 		var disabled bool
-		if err := tx.QueryRowContext(ctx, "SELECT quota_bytes, used_bytes, disabled FROM users WHERE id = ?", r.User.ID).Scan(&quota, &used, &disabled); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT quota_bytes + CASE WHEN quota_bytes > 0 AND overflow_node_id IS NOT NULL THEN overflow_quota_bytes ELSE 0 END, used_bytes, disabled FROM users WHERE id = ?", r.User.ID).Scan(&quota, &used, &disabled); err != nil {
 			return err
 		}
 		if disabled {

@@ -322,3 +322,46 @@ func (s *Store) StorageNodePaired(ctx context.Context, nodeID int64) bool {
 	_ = s.DB.QueryRowContext(ctx, "SELECT paired FROM storage_nodes WHERE id = ?", nodeID).Scan(&p)
 	return p
 }
+
+// SetOverflow sets (nodeID nil: removes) a user's overflow storage: up to
+// quota bytes on nodeID once their space on this server is full.
+func (s *Store) SetOverflow(ctx context.Context, userID int64, nodeID *int64, quota int64) error {
+	if nodeID == nil {
+		quota = 0
+	}
+	res, err := s.DB.ExecContext(ctx, "UPDATE users SET overflow_node_id = ?, overflow_quota_bytes = ? WHERE id = ?", nodeID, quota, userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UsersOverflowingTo lists the users with overflow storage on nodeID.
+func (s *Store) UsersOverflowingTo(ctx context.Context, nodeID int64) ([]int64, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT id FROM users WHERE overflow_node_id = ? ORDER BY id", nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// LocalUsage is the size of a user's content still stored on this server
+// (not moved to a node).
+func (s *Store) LocalUsage(ctx context.Context, userID int64) (int64, error) {
+	var n int64
+	err := s.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(b.size), 0) FROM blobs b LEFT JOIN remote_blobs r ON r.user_id = b.user_id AND r.sha256 = b.sha256 AND r.state = 'ok'
+		WHERE b.user_id = ? AND b.refcount > 0 AND r.sha256 IS NULL`, userID).Scan(&n)
+	return n, err
+}

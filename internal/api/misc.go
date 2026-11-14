@@ -46,7 +46,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp := map[string]any{
-		"usage":     map[string]any{"used_bytes": fresh.UsedBytes, "quota_bytes": fresh.QuotaBytes},
+		"usage":     map[string]any{"used_bytes": fresh.UsedBytes, "quota_bytes": fresh.TotalQuota()},
 		"files":     st,
 		"transfers": ts,
 		"recent":    recent,

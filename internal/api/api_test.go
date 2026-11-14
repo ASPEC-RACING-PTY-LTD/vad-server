@@ -173,11 +173,17 @@ func (e *env) createUser(admin *web, name string, quota int64) *web {
 // signed client.
 func (e *env) enrollDevice(w *web, login, password string) *client.Client {
 	e.t.Helper()
+	return e.enrollDeviceAs(w, login, password, "id-"+login)
+}
+
+// enrollDeviceAs enrolls a device with the given PC identifier.
+func (e *env) enrollDeviceAs(w *web, login, password, identifier string) *client.Client {
+	e.t.Helper()
 	base, _ := url.Parse(e.ts.URL)
 	c := client.New(base, client.Options{})
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	ctx := context.Background()
-	res, err := c.Enroll(ctx, client.EnrollRequest{Login: login, Password: password, DeviceName: "TEST-PC", OS: "Windows 11", Identifier: "id-" + login, PublicKey: protocol.EncodePublicKey(pub), ClientVersion: "test"})
+	res, err := c.Enroll(ctx, client.EnrollRequest{Login: login, Password: password, DeviceName: "TEST-PC", OS: "Windows 11", Identifier: identifier, PublicKey: protocol.EncodePublicKey(pub), ClientVersion: "test"})
 	if err != nil {
 		e.t.Fatalf("enroll: %v", err)
 	}

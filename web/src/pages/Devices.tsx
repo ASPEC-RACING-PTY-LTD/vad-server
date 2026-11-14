@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, ChevronDown, ChevronRight, Clock, Fingerprint, Globe, Laptop, MapPin, Monitor, Pencil, ShieldAlert, ShieldOff, Trash2, Users, X } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Clock, Combine, Fingerprint, Globe, Laptop, MapPin, Monitor, Pencil, ShieldAlert, ShieldOff, Trash2, Users, X } from 'lucide-react'
 import { del, errorMessage, get, patch, post } from '../lib/api'
 import { formatDate, timeAgo } from '../lib/format'
 import { Badge, Button, EmptyState, ErrorState, Field, IconButton, Modal, PageHeader, PageLoader, useUI } from '../components/ui'
@@ -101,6 +101,7 @@ export default function DevicesPage() {
   const { toast, confirm } = useUI()
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ['devices'], queryFn: () => get('/devices'), refetchInterval: 5000 })
   const [renaming, setRenaming] = useState<Device | null>(null)
+  const [merging, setMerging] = useState<Set<number> | null>(null)
   const [name, setName] = useState('')
   const [openProfiles, setOpenProfiles] = useState<Set<number>>(new Set())
   const user = useUser()
@@ -124,6 +125,15 @@ export default function DevicesPage() {
   const history = devices.filter((d) => d.status !== 'approved' && !(d.status === 'pending' && d.expires_at > now))
 
   const refresh = () => qc.invalidateQueries({ queryKey: ['devices'] })
+  // Merging: every device that is not a pending request; the same PC
+  // registered more than once (same identifier) is suggested.
+  const mergeable = devices.filter((d) => d.status !== 'pending')
+  const samePC = Object.values(
+    mergeable.reduce<Record<string, Device[]>>((acc, d) => {
+      if (d.identifier) (acc[d.identifier] ??= []).push(d)
+      return acc
+    }, {}),
+  ).filter((g) => g.length > 1)
   const decide = async (d: Device, action: 'approve' | 'reject') => {
     if (action === 'approve') {
       const ok = await confirm({ title: `Approve ${d.name}?`, message: <>This device will be able to upload files to your storage until you revoke it. Verification code: <strong className="font-mono">{d.user_code}</strong></>, confirmLabel: 'Approve device', tone: 'primary' })
@@ -174,7 +184,26 @@ export default function DevicesPage() {
       <ServerKeyCard />
       {pending.length > 0 && <div className="mb-8 space-y-4">{pending.map((d) => <PendingCard key={d.id} d={d} onDecide={decide} />)}</div>}
 
-      <h2 className="mb-3 text-sm font-semibold tracking-wide text-slate-500 uppercase">Authorised devices</h2>
+      {samePC.map((g) => (
+        <div key={g[0].identifier} className="card mb-4 flex flex-wrap items-center gap-3 border-amber-300 p-4 text-sm dark:border-amber-500/40">
+          <Combine className="size-5 text-amber-600" />
+          <span className="flex-1">
+            <strong>{g[0].name}</strong> is registered {g.length} times (the same PC reconnected). Merge them to keep one device with all its history.
+          </span>
+          <Button size="sm" variant="primary" onClick={() => setMerging(new Set(g.map((d) => d.id)))}>
+            Merge
+          </Button>
+        </div>
+      ))}
+
+      <div className="mb-3 flex items-center">
+        <h2 className="flex-1 text-sm font-semibold tracking-wide text-slate-500 uppercase">Authorised devices</h2>
+        {mergeable.length > 1 && (
+          <Button size="sm" variant="ghost" icon={<Combine className="size-4" />} onClick={() => setMerging(new Set())}>
+            Merge devices…
+          </Button>
+        )}
+      </div>
       <div className="card mb-8 overflow-hidden">
         {approved.length === 0 ? (
           <EmptyState icon={<Laptop className="size-6" />} title="No devices yet" description="Install the VaultDock desktop app on Windows, enter this server's address and your credentials, then approve the request here." />
@@ -265,6 +294,8 @@ export default function DevicesPage() {
         </>
       )}
 
+      {merging && <MergeDialog devices={mergeable} initial={merging} onClose={() => setMerging(null)} onDone={refresh} />}
+
       <Modal
         open={!!renaming}
         onClose={() => setRenaming(null)}
@@ -284,5 +315,77 @@ export default function DevicesPage() {
         </Field>
       </Modal>
     </div>
+  )
+}
+
+// survivor is the device a merge keeps: the one the PC uses now (approved,
+// then most recently seen, then newest), as the server picks it.
+function survivor(ds: Device[]): Device | undefined {
+  return [...ds].sort((a, b) => Number(b.status === 'approved') - Number(a.status === 'approved') || (b.last_seen_at ?? 0) - (a.last_seen_at ?? 0) || b.created_at - a.created_at)[0]
+}
+
+function MergeDialog({ devices, initial, onClose, onDone }: { devices: Device[]; initial: Set<number>; onClose: () => void; onDone: () => void }) {
+  const [sel, setSel] = useState<Set<number>>(initial)
+  const [busy, setBusy] = useState(false)
+  const { toast } = useUI()
+  const chosen = devices.filter((d) => sel.has(d.id))
+  const keep = survivor(chosen)
+  const toggle = (id: number) =>
+    setSel((s) => {
+      const n = new Set(s)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Merge devices"
+      description="Use this when the same computer shows up more than once. Uploads, sync folders, backups and activity of all of them are kept under one device."
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            loading={busy}
+            disabled={chosen.length < 2}
+            onClick={async () => {
+              setBusy(true)
+              try {
+                const r = await post<{ merged: number }>('/devices/merge', { device_ids: [...sel] })
+                toast('success', `Merged ${r.merged + 1} devices into ${keep?.name}`)
+                onDone()
+                onClose()
+              } catch (e) {
+                toast('error', 'Not merged', errorMessage(e))
+              } finally {
+                setBusy(false)
+              }
+            }}
+          >
+            Merge {chosen.length > 1 ? chosen.length : ''} devices
+          </Button>
+        </>
+      }
+    >
+      <ul className="divide-y divide-slate-100 text-sm dark:divide-slate-800">
+        {devices.map((d) => (
+          <li key={d.id}>
+            <label className="flex cursor-pointer items-center gap-3 py-2.5">
+              <input type="checkbox" checked={sel.has(d.id)} onChange={() => toggle(d.id)} />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{d.name}</span> <Badge tone={statusTone[d.status]}>{d.status}</Badge>
+                {keep?.id === d.id && chosen.length > 1 && <Badge tone="blue">kept</Badge>}
+                <span className="block text-xs text-slate-500">
+                  {d.os} · registered {formatDate(d.created_at)} · last seen {timeAgo(d.last_seen_at)}
+                </span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-slate-500">The device the computer uses now is kept, so it stays connected; the others are removed after their history moves to it.</p>
+    </Modal>
   )
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/auth"
+	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/inspect"
 	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/store"
 )
 
@@ -129,6 +130,10 @@ func (s *Server) handleShareCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isVideo(n) {
 		writeErr(w, r, errf(400, "not_video", "Only videos can be shared publicly"))
+		return
+	}
+	if sc, err := s.st.BlobScanOf(r.Context(), u.ID, n.SHA256); err == nil && sc.Verdict != inspect.Clean {
+		writeErr(w, r, errf(403, "not_shareable", "This file did not pass the upload inspection (%s) and cannot be shared publicly", sc.Detail))
 		return
 	}
 	title, desc, err := cleanShareText(req.Title, req.Description)

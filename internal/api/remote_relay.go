@@ -63,6 +63,9 @@ func (f localFile) Media() (media.Input, func()) { return media.File(f.File), fu
 
 // openBlob opens a user's stored content wherever it is.
 func (s *Server) openBlob(ctx context.Context, userID int64, sha string) (storedFile, error) {
+	if s.st.Quarantined(ctx, userID, sha) {
+		return nil, errQuarantined
+	}
 	if rb, err := s.st.RemoteBlob(ctx, userID, sha); err == nil && rb.State == "ok" {
 		return s.openRemote(ctx, rb)
 	}
@@ -113,6 +116,8 @@ type moveState struct {
 	Error   string `json:"error,omitempty"`
 	Started int64  `json:"started_at"`
 	Ended   int64  `json:"ended_at,omitempty"`
+	// Overflow: only what is beyond the user's space on this server moves.
+	Overflow bool `json:"overflow,omitempty"`
 }
 
 var remoteServices sync.Map // *Server -> *remoteService
@@ -426,12 +431,22 @@ func (c *chunkCache) put(k string, b []byte) {
 // startMove moves a user's files to their node in the background (one
 // move per user at a time). It reports false when one is running.
 func (rs *remoteService) startMove(s *Server, userID, nodeID int64) bool {
+	return rs.startMoveMode(s, userID, nodeID, false)
+}
+
+// startOverflowMove moves a user's largest files to their overflow node
+// until what stays on this server fits their quota here.
+func (rs *remoteService) startOverflowMove(s *Server, userID, nodeID int64) bool {
+	return rs.startMoveMode(s, userID, nodeID, true)
+}
+
+func (rs *remoteService) startMoveMode(s *Server, userID, nodeID int64, overflow bool) bool {
 	rs.mu.Lock()
 	if m, ok := rs.moves[userID]; ok && m.Running {
 		rs.mu.Unlock()
 		return false
 	}
-	st := &moveState{NodeID: nodeID, Running: true, Started: time.Now().UnixMilli()}
+	st := &moveState{NodeID: nodeID, Running: true, Started: time.Now().UnixMilli(), Overflow: overflow}
 	rs.moves[userID] = st
 	rs.mu.Unlock()
 	s.ops.wg.Add(1)
@@ -472,6 +487,9 @@ func (s *Server) runMove(ctx context.Context, userID, nodeID int64, st *moveStat
 		for i, ref := range refs {
 			if tried[ref.SHA256] {
 				continue
+			}
+			if st.Overflow && !s.overLocalQuota(ctx, userID) {
+				return nil
 			}
 			tried[ref.SHA256] = true
 			progressed = true
@@ -542,6 +560,9 @@ func (s *Server) remoteMoved(ctx context.Context, meta jobMeta, res nodeapi.JobR
 
 // contentError is the API error for content that cannot be opened.
 func contentError(err error) error {
+	if errors.Is(err, errQuarantined) {
+		return errf(403, "quarantined", "This file was quarantined by the upload inspection (it may be harmful). An administrator can review it.")
+	}
 	if errors.Is(err, errNodeOffline) {
 		return errf(503, "node_offline", "This file is kept on a storage node that is offline right now. Try again later.")
 	}

@@ -900,6 +900,7 @@ func (s *Server) Handler(web http.Handler) http.Handler {
 				r.Post("/devices/{id}/reject", s.handleDeviceDecision("rejected"))
 				r.Post("/devices/{id}/revoke", s.handleDeviceRevoke)
 				r.Patch("/devices/{id}", s.handleDevicePatch)
+				r.Post("/devices/merge", s.handleDevicesMerge)
 				r.Delete("/devices/{id}", s.handleDeviceDelete)
 
 				r.Get("/automations", s.handleAutomationList)

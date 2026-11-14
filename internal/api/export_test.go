@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 )
@@ -26,3 +27,8 @@ func (s *Server) SetRemoteHTTP(c *http.Client) { s.remote().http = c }
 
 // ClearRemoteCache drops the relay's decrypted chunks.
 func (s *Server) ClearRemoteCache() { s.remote().cache = newChunkCache(relayCacheBytes) }
+
+// LocalUsage is the user's content still stored on this server.
+func (s *Server) LocalUsage(ctx context.Context, userID int64) (int64, error) {
+	return s.st.LocalUsage(ctx, userID)
+}

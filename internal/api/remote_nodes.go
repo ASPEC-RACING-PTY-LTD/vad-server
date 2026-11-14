@@ -32,6 +32,9 @@ func (s *Server) mountRemoteNodes(rt routes) {
 	rt.Admin.Get("/admin/nodes/{id}/remote", s.handleNodeRemote)
 	rt.Admin.Put("/admin/users/{id}/upload-origin", s.handleUploadOriginSet)
 	rt.Admin.Post("/admin/users/{id}/move-to-node", s.handleMoveToNode)
+	rt.Admin.Put("/admin/users/{id}/overflow", s.handleOverflowSet)
+	rt.Admin.Get("/admin/security/uploads", s.handleFlaggedUploads)
+	rt.Admin.Put("/admin/security/uploads", s.handleReleaseUpload)
 }
 
 // publicBase is this server's external URL (for install commands).
@@ -225,6 +228,56 @@ func (s *Server) handleUploadOriginSet(w http.ResponseWriter, r *http.Request) {
 	}
 	s.activity(r, principal(r).User.ID, "user.upload_origin", u.Username, "files of this user are kept on "+target, true)
 	writeJSON(w, 200, map[string]any{"user_id": u.ID, "node_id": req.NodeID})
+}
+
+// handleOverflowSet gives a user extra space on a remote node, used once
+// their quota on this server is full: PUT {node_id, quota_bytes}
+// (node_id null removes it). Their largest files beyond the quota here move
+// to the node, as with a node that keeps all of a user's files.
+func (s *Server) handleOverflowSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeID     *int64 `json:"node_id"`
+		QuotaBytes int64  `json:"quota_bytes"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	u, err := s.st.UserByID(r.Context(), pathID(r))
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	detail := "overflow storage removed"
+	if req.NodeID != nil {
+		if u.QuotaBytes <= 0 {
+			writeErr(w, r, errf(409, "no_quota", "Give the user a storage quota on this server first; overflow storage is used once it is full"))
+			return
+		}
+		if req.QuotaBytes <= 0 {
+			writeErr(w, r, errf(400, "bad_quota", "Choose how much space the user gets on the node"))
+			return
+		}
+		n, err := s.st.StorageNode(r.Context(), *req.NodeID)
+		if err != nil || n.Status != "approved" {
+			writeErr(w, r, errf(404, "not_found", "Node not found or not approved"))
+			return
+		}
+		if u.UploadOrigin != nil && *u.UploadOrigin == n.ID {
+			writeErr(w, r, errf(409, "already_origin", "All of this user's files are already kept on %s", n.Name))
+			return
+		}
+		detail = fmt.Sprintf("overflow storage of %s on storage node %s", humanBytes(req.QuotaBytes), n.Name)
+	}
+	if err := s.st.SetOverflow(r.Context(), u.ID, req.NodeID, req.QuotaBytes); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if req.NodeID != nil && s.overLocalQuota(r.Context(), u.ID) {
+		s.remote().startOverflowMove(s, u.ID, *req.NodeID)
+	}
+	s.activity(r, principal(r).User.ID, "user.overflow", u.Username, detail, true)
+	writeJSON(w, 200, map[string]any{"user_id": u.ID, "node_id": req.NodeID, "quota_bytes": req.QuotaBytes})
 }
 
 func (s *Server) handleMoveToNode(w http.ResponseWriter, r *http.Request) {

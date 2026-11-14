@@ -8,22 +8,26 @@ import (
 )
 
 type User struct {
-	ID           int64  `json:"id"`
-	Username     string `json:"username"`
-	Email        string `json:"email"`
-	DisplayName  string `json:"display_name"`
-	Role         string `json:"role"`
-	Disabled     bool   `json:"disabled"`
-	QuotaBytes   int64  `json:"quota_bytes"`
-	UsedBytes    int64  `json:"used_bytes"`
-	LocationID   *int64 `json:"location_id"`
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	Role        string `json:"role"`
+	Disabled    bool   `json:"disabled"`
+	QuotaBytes  int64  `json:"quota_bytes"`
+	UsedBytes   int64  `json:"used_bytes"`
+	LocationID  *int64 `json:"location_id"`
 	// UploadOrigin is the remote node keeping this user's files (nil: this server).
 	UploadOrigin *int64 `json:"upload_origin_node_id"`
-	RootID       int64  `json:"root_id"`
-	CreatedAt    int64  `json:"created_at"`
-	UpdatedAt    int64  `json:"updated_at"`
-	LastLoginAt  *int64 `json:"last_login_at"`
-	PasswordHash string `json:"-"`
+	// OverflowNode keeps this user's files beyond QuotaBytes, up to
+	// OverflowQuota more (nil: no overflow storage).
+	OverflowNode  *int64 `json:"overflow_node_id"`
+	OverflowQuota int64  `json:"overflow_quota_bytes"`
+	RootID        int64  `json:"root_id"`
+	CreatedAt     int64  `json:"created_at"`
+	UpdatedAt     int64  `json:"updated_at"`
+	LastLoginAt   *int64 `json:"last_login_at"`
+	PasswordHash  string `json:"-"`
 }
 
 // ErrInvalidQuota is returned when a negative quota is stored.
@@ -31,12 +35,21 @@ var ErrInvalidQuota = errors.New("quota must not be negative")
 
 func (u *User) IsAdmin() bool { return u.Role == "admin" }
 
-const userCols = `id, username, COALESCE(email,''), display_name, role, disabled, quota_bytes, used_bytes, location_id, COALESCE(root_id,0), created_at, updated_at, last_login_at, password_hash, upload_origin_node_id`
+// TotalQuota is the space the user may use: QuotaBytes plus the overflow
+// allocation on a remote node (0 = unlimited).
+func (u *User) TotalQuota() int64 {
+	if u.QuotaBytes > 0 && u.OverflowNode != nil {
+		return u.QuotaBytes + u.OverflowQuota
+	}
+	return u.QuotaBytes
+}
+
+const userCols = `id, username, COALESCE(email,''), display_name, role, disabled, quota_bytes, used_bytes, location_id, COALESCE(root_id,0), created_at, updated_at, last_login_at, password_hash, upload_origin_node_id, overflow_node_id, overflow_quota_bytes`
 
 func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var loc, last, origin sql.NullInt64
-	err := sc.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Role, &u.Disabled, &u.QuotaBytes, &u.UsedBytes, &loc, &u.RootID, &u.CreatedAt, &u.UpdatedAt, &last, &u.PasswordHash, &origin)
+	var loc, last, origin, overflow sql.NullInt64
+	err := sc.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Role, &u.Disabled, &u.QuotaBytes, &u.UsedBytes, &loc, &u.RootID, &u.CreatedAt, &u.UpdatedAt, &last, &u.PasswordHash, &origin, &overflow, &u.OverflowQuota)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -46,6 +59,7 @@ func scanUser(sc interface{ Scan(...any) error }) (*User, error) {
 	u.LocationID = nullInt(loc)
 	u.LastLoginAt = nullInt(last)
 	u.UploadOrigin = nullInt(origin)
+	u.OverflowNode = nullInt(overflow)
 	return &u, nil
 }
 

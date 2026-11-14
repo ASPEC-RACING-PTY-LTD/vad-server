@@ -39,16 +39,21 @@ export default function UsersTab() {
 
   if (isLoading) return <PageLoader />
   if (error) return <ErrorState error={error} onRetry={refetch} />
+  const nodeName = (id: number) => remoteNodes.find((n) => n.id === id)?.name ?? 'Remote node'
   const locName = (u: any) =>
     u.upload_origin_node_id
-      ? `${remoteNodes.find((n) => n.id === u.upload_origin_node_id)?.name ?? 'Remote node'} (remote)`
-      : (locs.data?.locations.find((l: any) => l.id === u.location_id)?.name ?? '-')
+      ? `${nodeName(u.upload_origin_node_id)} (remote)`
+      : (locs.data?.locations.find((l: any) => l.id === u.location_id)?.name ?? '-') +
+        (u.overflow_node_id ? ` + ${formatBytes(u.overflow_quota_bytes)} on ${nodeName(u.overflow_node_id)}` : '')
 
   // Saves the edit form; a change of remote node goes through its own endpoint
   // and moves the user's existing files there.
   const saveEdit = async () => {
-    const { origin, ...fields } = form
+    const { origin, overflow, overflow_quota, ...fields } = form
     await patch(`/admin/users/${editing.id}`, fields)
+    if ((overflow ?? null) !== (editing.overflow_node_id ?? null) || (overflow && overflow_quota !== editing.overflow_quota_bytes)) {
+      await put(`/admin/users/${editing.id}/overflow`, { node_id: overflow ?? null, quota_bytes: overflow ? overflow_quota : 0 })
+    }
     if ((origin ?? null) !== (editing.upload_origin_node_id ?? null)) {
       await put(`/admin/users/${editing.id}/upload-origin`, { node_id: origin ?? null })
       if (origin) {
@@ -114,7 +119,7 @@ export default function UsersTab() {
                       </IconButton>
                     )}
                     items={[
-                      { label: 'Edit user, quota & storage', icon: <Settings className="size-4" />, onClick: () => (setForm({ email: u.email, display_name: u.display_name, role: u.role, quota_bytes: u.quota_bytes, location_id: u.location_id, origin: u.upload_origin_node_id ?? null }), setEditing(u)) },
+                      { label: 'Edit user, quota & storage', icon: <Settings className="size-4" />, onClick: () => (setForm({ email: u.email, display_name: u.display_name, role: u.role, quota_bytes: u.quota_bytes, location_id: u.location_id, origin: u.upload_origin_node_id ?? null, overflow: u.overflow_node_id ?? null, overflow_quota: u.overflow_quota_bytes || 100 * 2 ** 30 }), setEditing(u)) },
                       { label: 'Reset password', icon: <KeyRound className="size-4" />, onClick: () => (setForm({ password: '' }), setResetting(u)) },
                       { label: 'Sign out all sessions', icon: <ShieldOff className="size-4" />, onClick: () => act(() => post(`/admin/users/${u.id}/revoke-sessions`), 'Sessions revoked') },
                       { label: 'Recalculate usage', icon: <RefreshCw className="size-4" />, onClick: () => act(() => post(`/admin/users/${u.id}/recalculate`), 'Usage recalculated') },
@@ -244,6 +249,33 @@ export default function UsersTab() {
                 )}
               </select>
             </Field>
+            {remoteNodes.length > 0 && !form.origin && (
+              <Field
+                label="Extra space on a remote node"
+                hint={
+                  (form.quota_bytes ?? 0) > 0
+                    ? 'Used once the quota on this server is full: the largest files beyond it move to the node (encrypted). The total quota grows by this amount.'
+                    : 'Set a storage quota first; the extra space is used once it is full.'
+                }
+              >
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    className="input w-auto"
+                    value={form.overflow ?? ''}
+                    disabled={!(form.quota_bytes > 0)}
+                    onChange={(e) => setForm({ ...form, overflow: e.target.value ? Number(e.target.value) : null })}
+                  >
+                    <option value="">None</option>
+                    {remoteNodes.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.name}
+                      </option>
+                    ))}
+                  </select>
+                  {form.overflow && <QuotaInput value={form.overflow_quota ?? 0} onChange={(v) => setForm((f: any) => ({ ...f, overflow_quota: v }))} />}
+                </div>
+              </Field>
+            )}
           </div>
         )}
       </Modal>

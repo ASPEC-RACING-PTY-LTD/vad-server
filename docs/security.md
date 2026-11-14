@@ -19,6 +19,8 @@
 3. After approval, every device request is **signed** over the method, path, query, body SHA-256, device id, timestamp and a random nonce. The server rejects bad signatures, bodies that don't match the signed hash, timestamps more than 5 minutes off, reused nonces, and any signed request older than the server's start time (so a restart can't reopen the replay window).
 4. The private key is stored with **Windows DPAPI** (bound to the Windows user); the password is never stored.
 5. Revoking a device (user or admin) takes effect on its next request; its in-progress uploads are cancelled. Disabling an account blocks its sessions and devices.
+6. On the PC the device key is also sealed with an **app lock**: a key unlocked by the user's 6-digit PIN (Argon2id, with a growing wait after wrong tries) or Windows Hello (a TPM-backed key in the user's Hello container). The app starts locked after every Windows start, restart and update, and nothing reaches the server until it is unlocked.
+7. A PC that reconnects (same device identifier) keeps one device: approving the request merges its earlier registrations, with their history, into it. Owners can also merge devices on the Devices page.
 
 ## Isolation and validation
 
@@ -26,6 +28,9 @@
 - Names are validated against Windows and POSIX rules (no separators, `..`, control characters or reserved names). Disk paths are derived only from numeric user ids and verified SHA-256 hashes, so names can never influence filesystem paths.
 - Storage locations can only be registered under `VAULTDOCK_STORAGE_ROOTS`.
 - User content is served with `X-Content-Type-Options: nosniff`, a sandboxing CSP, and forced download for anything that could execute in the browser (HTML, SVG, XML, scripts). The web UI itself has a strict CSP.
+- **Every upload is untrusted**, whichever account (administrators included) and device sent it. Uploads are inspected when they finish: programs, scripts, shortcuts, installers and macro documents are flagged (served only as downloads, never previewed, processed or shared publicly); content disguised as something harmless (a program named `.mp4`) and anything ClamAV reports (`VAULTDOCK_CLAMD`) is quarantined: not served, shared, processed or copied until an administrator releases it (Administration > Upload security). Findings are written to the audit log and notified.
+- Media processing treats content as hostile: FFmpeg may only open the input itself (`-protocol_whitelist`), so playlists or references inside a file cannot reach other files or the network.
+- Each account's content is its own sandbox: blobs, deduplication, thumbnails and caches are keyed by user, so nothing one account uploads can reach another account's files.
 - Request bodies are size-limited; JSON decoding rejects unknown fields.
 - Automations cannot run code, shell commands or touch local files: actions only affect upload destinations, tags, folders in VaultDock, notifications and starting configured sync tasks. Templates are a fixed filter language. Desktop notifications use the WinRT API only (never a script-based fallback), so file names can't inject commands.
 

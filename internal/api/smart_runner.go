@@ -615,7 +615,7 @@ func (s *Server) renderOutput(ctx context.Context, user *store.User, src *store.
 		return err
 	}
 	est := media.EstimateSize(&c, mode, info)
-	if fresh, err := s.st.UserByID(ctx, user.ID); err == nil && fresh.QuotaBytes > 0 && fresh.UsedBytes+est > fresh.QuotaBytes {
+	if fresh, err := s.st.UserByID(ctx, user.ID); err == nil && fresh.QuotaBytes > 0 && fresh.UsedBytes+est > fresh.TotalQuota() {
 		return store.ErrQuota
 	}
 	if err := s.blobs.CheckSpace(ctx, loc, est+est/4+64<<20); err != nil {

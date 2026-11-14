@@ -210,6 +210,8 @@ func (s *Server) handleDeviceDecision(status string) http.HandlerFunc {
 		s.activity(r, p.User.ID, action, d.Name, "fingerprint "+d.KeyFingerprint, true)
 		d2, _ := s.st.Device(r.Context(), d.ID)
 		if status == "approved" && d2 != nil {
+			// A reconnecting PC keeps one device with its whole history.
+			s.mergeSamePC(context.WithoutCancel(r.Context()), r, d2)
 			// Share the user's repository keys with the new device (api-v1
 			// §5A key_share). Failures are logged; keys/status retries.
 			s.shareKeysToDevice(context.WithoutCancel(r.Context()), d2)
@@ -461,7 +463,7 @@ func (s *Server) handleDeviceMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"device":   s.deviceView(r.Context(), p.Device),
 		"features": features(),
-		"user":     map[string]any{"id": u.ID, "username": u.Username, "display_name": u.DisplayName, "role": u.Role, "quota_bytes": u.QuotaBytes, "used_bytes": u.UsedBytes},
+		"user":     map[string]any{"id": u.ID, "username": u.Username, "display_name": u.DisplayName, "role": u.Role, "quota_bytes": u.TotalQuota(), "used_bytes": u.UsedBytes},
 		"server":   map[string]any{"version": Version, "chunk_size": s.cfg.ChunkSize, "max_file_bytes": s.settings.Get().MaxFileBytes, "max_concurrent_chunks": s.cfg.MaxConcurrentChunkWrites, "site_name": s.settings.Get().SiteName},
 	})
 }

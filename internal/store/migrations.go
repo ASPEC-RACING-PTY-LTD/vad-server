@@ -1301,4 +1301,22 @@ CREATE TABLE remote_blobs (
 );
 CREATE INDEX remote_blobs_node ON remote_blobs(node_id, state);
 `,
+	// 19: overflow storage on a remote node (a second allocation used once
+	// a user's space on this server is full) and upload inspection results
+	// (every upload is untrusted, whoever sent it).
+	`
+ALTER TABLE users ADD COLUMN overflow_node_id INTEGER;
+ALTER TABLE users ADD COLUMN overflow_quota_bytes INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE blob_scans (
+	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	sha256     TEXT NOT NULL,
+	verdict    TEXT NOT NULL CHECK (verdict IN ('clean','flagged','quarantined')),
+	kind       TEXT NOT NULL DEFAULT '',
+	detail     TEXT NOT NULL DEFAULT '',
+	engine     TEXT NOT NULL DEFAULT '',
+	scanned_at INTEGER NOT NULL,
+	PRIMARY KEY (user_id, sha256)
+);
+CREATE INDEX blob_scans_verdict ON blob_scans(verdict) WHERE verdict != 'clean';
+`,
 }

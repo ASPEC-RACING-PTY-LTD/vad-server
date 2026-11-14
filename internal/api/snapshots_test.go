@@ -20,7 +20,7 @@ func TestRepoLocks(t *testing.T) {
 	alice := e.createUser(admin, "alice", 0)
 	bob := e.createUser(admin, "bob", 0)
 	dc := e.enrollDevice(alice, "alice", "password-alice")
-	dc2 := e.enrollDevice(alice, "alice", "password-alice")
+	dc2 := e.enrollDeviceAs(alice, "alice", "password-alice", "id-alice-2")
 	bc := e.enrollDevice(bob, "bob", "password-bob")
 	if dc2.DeviceID == dc.DeviceID {
 		t.Fatal("second device not distinct")

@@ -20,6 +20,10 @@ type Config struct {
 	// worker (local inference container); empty URL: not installed.
 	SmartWorkerURL string
 	SmartToken     string
+	// ClamdAddr reaches an optional ClamAV daemon that scans every upload;
+	// ClamdMaxMB is the largest file sent to it.
+	ClamdAddr  string
+	ClamdMaxMB int
 	// DefaultStorage is the storage location created on first start.
 	DefaultStorage string
 	// StorageRoots restricts which directories admins may register as
@@ -129,6 +133,8 @@ func Load() (*Config, error) {
 
 		SmartWorkerURL: env("VAULTDOCK_SMART_WORKER_URL", ""),
 		SmartToken:     env("VAULTDOCK_SMART_TOKEN", ""),
+
+		ClamdAddr: env("VAULTDOCK_CLAMD", ""),
 	}
 	c.KEKFile = env("VAULTDOCK_KEK_FILE", filepath.Join(c.StateDir, "keys", "kek"))
 	for _, r := range strings.Split(env("VAULTDOCK_STORAGE_ROOTS", "/storage"), ",") {
@@ -160,6 +166,11 @@ func Load() (*Config, error) {
 		}
 		c.TrustedProxies = append(c.TrustedProxies, pref.Masked())
 	}
+	cm, err := envInt("VAULTDOCK_CLAMD_MAX_MB", 100)
+	if err != nil {
+		return nil, err
+	}
+	c.ClamdMaxMB = int(max(1, min(cm, 4096)))
 	n, err := envInt("VAULTDOCK_MAX_CONCURRENT_CHUNKS", 128)
 	if err != nil {
 		return nil, err

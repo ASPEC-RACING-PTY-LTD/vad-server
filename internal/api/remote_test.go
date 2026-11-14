@@ -197,6 +197,46 @@ func TestRemoteStorageNode(t *testing.T) {
 		t.Fatalf("tampered chunk: %d %s", code, b)
 	}
 
+	// Overflow: carol has 3 MiB here and 100 MiB more on the node; what is
+	// beyond her space here moves there, the rest stays.
+	carol := e.createUser(admin, "carol", 3<<20)
+	cc := e.enrollDevice(carol, "carol", "password-carol")
+	cme := carol.must("GET", "/api/v1/auth/me", nil, 200)
+	cid := int64(cme["user"].(map[string]any)["id"].(float64))
+	admin.must("PUT", fmt.Sprintf("/api/v1/admin/users/%d/overflow", cid), map[string]any{"node_id": nid, "quota_bytes": 100 << 20}, 200)
+	var carolFiles []int64
+	for i, size := range []int{2 << 20, 2<<20 + 5} {
+		b := make([]byte, size)
+		rand.Read(b)
+		cp := filepath.Join(tmp, fmt.Sprintf("carol%d.bin", i))
+		if err := os.WriteFile(cp, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res, err := cc.UploadFile(ctx, cp, fmt.Sprintf("/c%d.bin", i), nil)
+		if err != nil {
+			t.Fatalf("upload within the overflow allowance: %v", err)
+		}
+		carolFiles = append(carolFiles, nodeID(t, res.Node))
+	}
+	waitFor(t, 60*time.Second, "overflow moved", func() bool {
+		local, err := e.srv.LocalUsage(ctx, cid)
+		return err == nil && local <= 3<<20
+	})
+	if local, _ := e.srv.LocalUsage(ctx, cid); local == 0 {
+		t.Fatal("overflow moved everything, not only what is beyond the quota here")
+	}
+	for _, id := range carolFiles {
+		req, _ := http.NewRequest("GET", fmt.Sprintf("%s/api/v1/files/%d/content", e.ts.URL, id), nil)
+		resp, err := carol.c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("overflow file %d: %d", id, resp.StatusCode)
+		}
+	}
+
 	// Deleting the file removes it from the node.
 	bob.must("DELETE", fmt.Sprintf("/api/v1/files/%d", fileID), nil, 200)
 	bob.must("DELETE", fmt.Sprintf("/api/v1/trash/%d", fileID), nil, 200)

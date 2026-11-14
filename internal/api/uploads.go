@@ -23,6 +23,7 @@ import (
 	"github.com/ASPEC-RACING-PTY-LTD/vad-client/sdk/pathutil"
 	"github.com/ASPEC-RACING-PTY-LTD/vad-client/sdk/wire"
 	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/auth"
+	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/inspect"
 	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/storage"
 	"github.com/ASPEC-RACING-PTY-LTD/vad-server/internal/store"
 )
@@ -263,9 +264,9 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fresh, _ := s.st.UserByID(r.Context(), u.ID)
-		if fresh.UsedBytes+pending+req.Size > fresh.QuotaBytes {
+		if fresh.UsedBytes+pending+req.Size > fresh.TotalQuota() {
 			writeErr(w, r, &apiError{Status: 413, Code: "quota_exceeded", Message: "Storage quota exceeded",
-				Details: map[string]any{"quota": fresh.QuotaBytes, "used": fresh.UsedBytes, "pending": pending, "requested": req.Size}})
+				Details: map[string]any{"quota": fresh.TotalQuota(), "used": fresh.UsedBytes, "pending": pending, "requested": req.Size}})
 			return
 		}
 	}
@@ -894,8 +895,19 @@ func (s *Server) finalize(ctx context.Context, p *Principal, up *store.Upload) (
 		return nil, errf(400, "invalid_path", "Invalid upload path")
 	}
 	name := segs[len(segs)-1]
+	// Every upload is unknown content: check it before anything processes it.
+	var head []byte
+	if f, err := os.Open(tmp); err == nil {
+		head = inspect.ReadHead(f)
+		f.Close()
+	}
+	scan := s.inspectUpload(ctx, up.UserID, sum, name, head)
 	mt := mimetypes.ByName(name)
-	if mt == "application/octet-stream" {
+	if scan.Verdict != inspect.Clean {
+		// Never shown inline or handled as media, whatever its name says.
+		mt = "application/octet-stream"
+	}
+	if mt == "application/octet-stream" && scan.Verdict == inspect.Clean {
 		if f, err := os.Open(tmp); err == nil {
 			head := make([]byte, 512)
 			n, _ := io.ReadFull(f, head)
@@ -927,7 +939,10 @@ func (s *Server) finalize(ctx context.Context, p *Principal, up *store.Upload) (
 	if err != nil {
 		return nil, err
 	}
-	s.mediaCommitted(up.UserID, res.Node)
+	if scan.Verdict == inspect.Clean {
+		s.mediaCommitted(up.UserID, res.Node)
+	}
+	s.uploadCommitted(up.UserID, res.Node)
 	return res, nil
 }
 

@@ -55,9 +55,28 @@ func (s *Server) remoteCycle(ctx context.Context) {
 				s.remote().startMove(s, u, n.ID)
 			}
 		}
+		// Overflow: users whose space here is full keep the rest there.
+		if over, err := s.st.UsersOverflowingTo(ctx, n.ID); err == nil {
+			for _, u := range over {
+				if s.overLocalQuota(ctx, u) {
+					s.remote().startOverflowMove(s, u, n.ID)
+				}
+			}
+		}
 		s.remoteVerifyDue(ctx, n.ID)
 		s.remoteRetryDeletes(ctx, n.ID)
 	}
+}
+
+// overLocalQuota reports whether a user with overflow storage keeps more
+// on this server than their quota here.
+func (s *Server) overLocalQuota(ctx context.Context, userID int64) bool {
+	u, err := s.st.UserByID(ctx, userID)
+	if err != nil || u.QuotaBytes <= 0 || u.OverflowNode == nil || u.UploadOrigin != nil {
+		return false
+	}
+	local, err := s.st.LocalUsage(ctx, userID)
+	return err == nil && local > u.QuotaBytes
 }
 
 // remoteRemoved deletes a remote file whose content nothing uses any more.

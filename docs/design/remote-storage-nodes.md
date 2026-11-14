@@ -211,3 +211,15 @@ Each phase ships on its own and is usable.
 2. **Bandwidth.** Playback of node files uses the node's upload and the main server's download and upload. Is a per-node limit on concurrent relayed streams wanted?
 3. **Folder-level assignment** is in phase 4. Is per-user enough to start?
 4. **Existing users:** when a user is assigned, should their existing files move automatically, or only when the admin presses "Move existing files" (the current proposal)?
+
+## Overflow storage (implemented)
+
+An administrator can give a user extra space on a remote node, used once
+their quota on this server is full (Administration > Users > Edit > "Extra
+space on a remote node"). The user's total quota grows by that amount.
+Uploads still arrive here first (direct uploads to nodes are phase 2); every
+10 minutes, and right after an upload that leaves the user over their quota
+here, their largest files beyond it move to the node exactly as for a node
+that keeps all of a user's files (VDR2, verified, then removed here).
+Playback and downloads relay through this server. API:
+`PUT /api/v1/admin/users/{id}/overflow {node_id|null, quota_bytes}`.
