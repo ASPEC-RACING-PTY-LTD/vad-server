@@ -1571,6 +1571,25 @@ backup_now() { # backup_now -> prints backup dir
 	printf '%s' "$dest"
 }
 
+# prune_upgrade_backups keeps only the newest upgrade backup (the one taken
+# for the upgrade that just succeeded) and the .env copy of that run; older
+# upgrade-* and env-* backups are deleted so they do not fill the disk.
+# Other backups (replaced-*: data moved aside by a fresh install,
+# integration-*, cloudflared-*) are never touched.
+prune_upgrade_backups() {
+	[ -d "$BACKUPS" ] || return 0
+	local kind keep d n=0
+	for kind in upgrade env; do
+		keep=$(find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d -name "$kind-*" -printf '%f\n' 2>/dev/null | sort | tail -n1)
+		[ -n "$keep" ] || continue
+		while IFS= read -r d; do
+			[ -n "$d" ] && [ "$d" != "$keep" ] || continue
+			rm -rf -- "${BACKUPS:?}/$d" && n=$((n + 1))
+		done < <(find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d -name "$kind-*" -printf '%f\n' 2>/dev/null)
+	done
+	[ "$n" = 0 ] || ok "Removed $n old upgrade backup(s); kept the latest in $BACKUPS"
+}
+
 # upgrade_lock makes sure only one upgrade (manual or scheduled) runs at a time.
 upgrade_lock() {
 	command -v flock >/dev/null 2>&1 || return 0
@@ -1645,6 +1664,7 @@ do_upgrade() {
 	if compose up -d --remove-orphans && wait_healthy; then
 		rm -rf -- "$APP.old"
 		ok "Upgrade complete. Backup kept at $bk"
+		prune_upgrade_backups
 		# The new installer sets up the control job: an older copy of this
 		# script running the upgrade may not know how.
 		VAULTDOCK_DIR="$DIR" "$APP/install.sh" control-setup || ensure_control_cron
@@ -2263,7 +2283,9 @@ main() {
 	status) do_status ;;
 	auto-update) do_auto_update "${2:-status}" ;;
 	control) do_control ;;
-	control-setup) installed && ensure_control_cron ;;
+	# Run by the previous installer right after an upgrade: the new
+	# version's housekeeping (older installers keep every backup).
+	control-setup) installed && { prune_upgrade_backups; ensure_control_cron; } ;;
 	env-review) do_env_review ;;
 	integrations) do_integrations "${2:-}" "${3:-}" ;;
 	kek-status) do_kek_status ;;
