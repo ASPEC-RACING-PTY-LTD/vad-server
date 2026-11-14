@@ -856,6 +856,7 @@ func (s *Server) Handler(web http.Handler) http.Handler {
 			r.Post("/uploads", s.handleUploadCreate)
 			r.Get("/uploads", s.handleUploadList)
 			r.Post("/uploads/results", s.handleUploadResults)
+			r.Post("/uploads/known", s.handleSyncKnown)
 			r.Get("/uploads/{id}", s.handleUploadGet)
 			r.Put("/uploads/{id}/chunks/{index}", s.handleUploadChunk)
 			r.Post("/uploads/{id}/complete", s.handleUploadComplete)

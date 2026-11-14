@@ -828,3 +828,12 @@ func (s *Store) HasBlob(ctx context.Context, userID int64, sha string) (bool, er
 	err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM blobs WHERE user_id = ? AND sha256 = ? AND refcount > 0", userID, sha).Scan(&n)
 	return n > 0, err
 }
+
+// HasFile reports whether the user stores a live file with this name, size
+// and modification time (unix ms, within 2 s).
+func (s *Store) HasFile(ctx context.Context, userID int64, name string, size, modifiedAt int64) (bool, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT 1 FROM nodes WHERE user_id = ? AND name = ? COLLATE NOCASE AND is_dir = 0
+		AND deleted_at IS NULL AND size = ? AND modified_at BETWEEN ? AND ? LIMIT 1)`, userID, name, size, modifiedAt-2000, modifiedAt+2000).Scan(&n)
+	return n > 0, err
+}
